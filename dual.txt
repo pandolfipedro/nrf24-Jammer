@@ -1,0 +1,110 @@
+#include <SPI.h>
+#include "RF24.h"
+#include "esp_bt.h"
+#include "esp_wifi.h"
+
+static SPIClass hspi(HSPI);
+static SPIClass vspi(VSPI);
+
+// CE, CSN, SPI speed
+RF24 radio1(16, 15, 10000000);  // HSPI
+RF24 radio2(22, 21, 10000000);  // VSPI
+
+static uint8_t channel = 45;
+static bool ascending = true;
+
+constexpr uint8_t CHANNEL_MIN = 2;
+constexpr uint8_t CHANNEL_MAX = 79;
+constexpr uint8_t CHANNEL_STEP = 2;
+constexpr uint8_t CHANNEL_OFFSET = 10;  // defasagem do radio2
+
+void disableEspRadios() {
+  esp_bt_controller_deinit();
+  esp_wifi_stop();
+  esp_wifi_deinit();
+}
+
+bool initRadio() {
+  hspi.begin();
+  vspi.begin();
+
+  if (!radio1.begin(&hspi)) {
+    Serial.println("RF24 #1 init failed");
+    return false;
+  }
+  if (!radio2.begin(&vspi)) {
+    Serial.println("RF24 #2 init failed");
+    return false;
+  }
+
+  delay(200);
+  Serial.println("RF24 #1 and #2 started");
+
+  radio1.stopListening();
+  radio2.stopListening();
+
+  radio1.setPayloadSize(5);
+  radio2.setPayloadSize(5);
+
+  radio1.setAddressWidth(3);
+  radio2.setAddressWidth(3);
+
+  radio1.setPALevel(RF24_PA_MAX, true);
+  radio2.setPALevel(RF24_PA_MAX, true);
+
+  radio1.setDataRate(RF24_2MBPS);
+  radio2.setDataRate(RF24_2MBPS);
+
+  radio1.startConstCarrier(RF24_PA_MAX, channel);
+
+  uint8_t ch2 = channel + CHANNEL_OFFSET;
+  if (ch2 > CHANNEL_MAX) ch2 = CHANNEL_MIN + (ch2 - CHANNEL_MAX);
+  radio2.startConstCarrier(RF24_PA_MAX, ch2);
+
+  Serial.println("--- Radio #1 ---");
+  radio1.printPrettyDetails();
+  Serial.println("--- Radio #2 ---");
+  radio2.printPrettyDetails();
+
+  return true;
+}
+
+void hopChannel() {
+  if (ascending) {
+    if (channel + CHANNEL_STEP > CHANNEL_MAX) {
+      ascending = false;
+      channel -= CHANNEL_STEP;
+    } else {
+      channel += CHANNEL_STEP;
+    }
+  } else {
+    if (channel < CHANNEL_MIN + CHANNEL_STEP) {
+      ascending = true;
+      channel += CHANNEL_STEP;
+    } else {
+      channel -= CHANNEL_STEP;
+    }
+  }
+
+  radio1.setChannel(channel);
+
+  uint8_t ch2 = channel + CHANNEL_OFFSET;
+  if (ch2 > CHANNEL_MAX) ch2 = CHANNEL_MIN + (ch2 - CHANNEL_MAX);
+  radio2.setChannel(ch2);
+}
+
+void setup() {
+  Serial.begin(115200);
+  disableEspRadios();
+
+  if (!initRadio()) {
+    while (true) {
+      delay(1000);
+    }
+  }
+}
+
+void loop() {
+  hopChannel();
+  delayMicroseconds(200);
+}
